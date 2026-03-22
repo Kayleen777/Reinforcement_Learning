@@ -161,34 +161,88 @@ def Q_learning(num_episodes=10000, gamma=0.9, epsilon=1, decay_rate=0.999):
     """
 	Q_table = {}
 	
-
 	'''
-
-
-
-
-
-
-
-
-
-
 
 	YOUR CODE HERE
 
-
-
-
-
-
-
-
-
-
-
-
-
 	'''
+	# stores counts (how many times Q(s,a) been updated?)
+	count_table = {}
+
+	# for the results.pdf graph: list for each episode's reward
+	episode_reward = []
+
+	for episode in range(num_episodes):
+		# starts a fresh game
+		obs, reward, done, info = env.reset()
+		# For the graph: track total reward for this episode
+		total_reward = 0
+
+		# while the episode is still on going
+		while not done:
+			# show state
+			state = hash(obs)
+
+			# if we've never seen this state before, zero for all actions ([0, 0, 0, 0, 0, 0, 0, 0])
+			if state not in Q_table:
+				Q_table[state] = np.zeros(env.action_space.n)
+				count_table[state] = np.zeros(env.action_space.n)
+				
+			# epsilon-greedy: when a random number (0 and 1) is given,
+			# if that number is less than epsilon, explore (random action). 
+			# Otherwise, exploit (pick the best action we know)
+			if np.random.random() < epsilon:
+				action = env.action_space.sample()
+			else:
+				q_values = Q_table[state]
+				max_q = np.max(q_values)
+				# find all actions that have the max value
+				best_actions = np.where(q_values == max_q)[0]
+				# randomly pick one of them so no bias when same q-value 
+				action = np.random.choice(best_actions)
+
+			# take action and show state
+			obs, reward, done, info = env.step(action)
+			new_state = hash(obs)
+
+			# track reward for the graph
+			total_reward += reward
+
+			# initialize new state if not in Q_table
+			if new_state not in Q_table:
+				Q_table[new_state] = np.zeros(env.action_space.n)
+				count_table[new_state] = np.zeros(env.action_space.n)
+		
+			# Q-learning formula:
+			# α = 1/(1 + #of previous updates to Q(s,a))
+			alpha = 1 / (1 + count_table[state][action])
+
+			# find the best Q-value in the new state
+			bestQ_new = np.max(Q_table[new_state])
+
+			# The Q-learning update formula
+			# Q(s, a) ← Q(s,a) + α(R(s, a, s’) + γ * max_a’ Q(s’,a’) - Q(s, a))
+			Q_table[state][action] = Q_table[state][action] + alpha * (reward + gamma * bestQ_new - Q_table[state][action])
+
+			# keep track that Q(s,a) is updated
+			count_table[state][action] += 1
+
+		episode_reward.append(total_reward)
+		# decay epsilon
+		epsilon = epsilon * decay_rate
+
+	# Save episode rewards for the graph
+	with open('episode_rewards.pickle', 'wb') as handle:
+		pickle.dump(episode_reward, handle)
+		
+	# Save count_table for the 5x8 table
+	with open('count_table.pickle', 'wb') as handle:
+		pickle.dump(count_table, handle)
+
+	print(f"Training complete!")
+	print(f"Total episodes: {num_episodes}")
+	print(f"Average reward: {sum(episode_reward) / len(episode_reward):.2f}")
+	print(f"Unique states discovered: {len(Q_table)}")
 
 	return Q_table
 
@@ -196,8 +250,8 @@ def Q_learning(num_episodes=10000, gamma=0.9, epsilon=1, decay_rate=0.999):
 Specify number of episodes and decay rate for training and evaluation.
 '''
 
-num_episodes = 1000
-decay_rate = 0.99
+num_episodes = 200000
+decay_rate = 0.9999
 
 '''
 Run training if train_flag is set; otherwise, run evaluation using saved Q-table.
