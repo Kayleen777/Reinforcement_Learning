@@ -1,0 +1,1 @@
+Training an agent to play the game using Q-learning. To do so, I will be writing the Q_learning function in Q_learning.py. I will be training your agent by playing through many episodes of the game, using an epsilon-greedy strategy and updating a Q-table as I go.
