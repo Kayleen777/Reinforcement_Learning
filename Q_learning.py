@@ -239,7 +239,6 @@ def Q_learning(num_episodes=10000, gamma=0.9, epsilon=1, decay_rate=0.999):
 	with open('count_table.pickle', 'wb') as handle:
 		pickle.dump(count_table, handle)
 
-	print(f"Training complete!")
 	print(f"Total episodes: {num_episodes}")
 	print(f"Average reward: {sum(episode_reward) / len(episode_reward):.2f}")
 	print(f"Unique states discovered: {len(Q_table)}")
@@ -277,6 +276,12 @@ def softmax(x, temp=1.0):
 if not train_flag:
 	
 	rewards = []
+	# episode lengths
+	episode_lengths = []
+	# count states not in Q-table
+	missing_state = 0
+	# count total actions
+	total_actions = 0
 
 	filename = 'Q_table.pickle'
 	input(f"\n{BOLD}Currently loading Q-table from "+filename+f"{RESET}.  \n\nPress Enter to confirm, or Ctrl+C to cancel and load a different Q-table file.\n(set num_episodes and decay_rate in Q_learning.py).")
@@ -285,20 +290,120 @@ if not train_flag:
 	for episode in tqdm(range(10000)):
 		obs, reward, done, info = env.reset()
 		total_reward = 0
+		step = 0
 		
 		while not done:
 			state = hash(obs)
+			total_actions += 1
 			try:
 				action = np.random.choice(env.action_space.n, p=softmax(Q_table[state]))  # Select action using softmax over Q-values
 			except KeyError:
 				action = env.action_space.sample()  # Fallback to random action if state not in Q-table
+				missing_state += 1
 			
 			obs, reward, done, info = env.step(action)
 			
 			total_reward += reward
+			step += 1
 			if gui_flag:
 				refresh(obs, reward, done, info, delay=.1)  # Update the game screen [GUI only]
 
 		#print("Total reward:", total_reward)
 		rewards.append(total_reward)
+		episode_lengths.append(step)
 	avg_reward = sum(rewards)/len(rewards)
+	avg_length = sum(episode_lengths)/len(episode_lengths)
+
+	# prints for results.pdf
+	print(f"Average reward: {avg_reward:.2f}")
+	print(f"Average episode length: {avg_length:.2f}")
+	print(f"Unique states in Q-table: {len(Q_table)}")
+	print(f"Missing states encountered: {missing_state}")
+	print(f"Total actions taken: {total_actions}")
+	print(f"Percent actions from missing states: {100*missing_state/total_actions:.2f}%")
+
+	# make graphs
+	import matplotlib.pyplot as plt
+
+	with open('episode_rewards.pickle', 'rb') as handle:
+		episode_rewards = pickle.load(handle)
+	
+	# calculate moving average for smoother line
+	window_size = 1000
+	# empty list to store our moving averages
+	avg_line = []
+	# loop through each episode (i goes from 0 to 199,999)
+	for i in range(len(episode_rewards)):
+		# start of averaging
+		start = max(0, i - window_size)
+		# calculate average from 'start' to current episode 'i'
+		avg_line.append(sum(episode_rewards[start:i+1]) / (i - start + 1))
+	
+	plt.figure(figsize=(12, 6))
+	plt.plot(episode_rewards, linewidth=0.3, alpha=0.3, label='Per episode rewards')
+	plt.plot(avg_line, linewidth=2, color='red', label='Averaged line(1000 episodes)')
+	plt.xlabel('Episode', fontsize=12)
+	plt.ylabel('Total Reward', fontsize=12)
+	plt.title('Rewards per Training Episode', fontsize=14)
+	plt.legend()
+	plt.grid(True, alpha=0.3)
+	plt.savefig('rewards_graph.png', dpi=150, bbox_inches='tight')
+	print("Rewards_graph.png saved")
+
+	# make 5 x 8 table
+	with open('count_table.pickle', 'rb') as handle:
+		count_table = pickle.load(handle)
+	
+	# This function looks at a state ID number and figures out: 
+	# If there is the agent on a heal cell? or If there is a guard in G1, G2, G3, or G4?
+	def get_state_info(state_id):
+		window = 9 ** 9
+		# Find which guard
+		guard_index = (state_id % (window * 5)) // window
+		#Find where player is
+		window_hash = state_id % window
+		center_value = (window_hash // (9**4)) % 9
+		# 0 = empty, 1 = trap, 2 = heal, 3 = goal
+		tile_type = center_value % 4
+		is_heal = (tile_type == 2) and (guard_index == 0)
+		return {'is_heal': is_heal, 'guard': guard_index}
+	
+	categories = ['Heal cell', 'With G1', 'With G2', 'With G3', 'With G4']
+	actions = ['UP', 'DOWN', 'LEFT', 'RIGHT', 'FIGHT', 'HIDE', 'HEAL', 'WAIT']
+	
+	# q_sums hold sum of Q-value for each category and action
+	q_sums = {cat: np.zeros(8) for cat in categories}
+	# count_sums hold sum of visit counts for each category and action
+	count_sums = {cat: np.zeros(8) for cat in categories}
+	
+	# loop through every state in our Q-table
+	for state, q_values in Q_table.items():
+		info = get_state_info(state)
+		# get how many times we visited each action in this state
+		n_values = count_table.get(state, np.zeros(8))
+		
+		# if is a heal cell state, add to the Heal cell row
+		if info['is_heal']:
+			for a in range(8):
+				q_sums['Heal cell'][a] += q_values[a] * n_values[a]
+				count_sums['Heal cell'][a] += n_values[a]
+		
+		# if there's a guard, add to the specific guard row
+		if info['guard'] > 0:
+			cat = f"With G{info['guard']}"
+			for a in range(8):
+				q_sums[cat][a] += q_values[a] * n_values[a]
+				count_sums[cat][a] += n_values[a]
+	
+	# print the table
+	print("5x8 Q-VALUE TABLE (Weighted Averages)")
+	print("\t\t" + "\t".join(actions))
+	for cat in categories:
+		row_values = []
+		for a in range(8):
+			if count_sums[cat][a] > 0:
+				avg = q_sums[cat][a] / count_sums[cat][a]
+			else:
+				avg = 0.0
+			row_values.append(f"{avg:.1f}")
+		print(f"{cat}\t" + "\t".join(row_values))
